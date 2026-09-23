@@ -55,7 +55,10 @@ If you have a lot of files to process, you can distribute the load over multiple
 ```bash
 for gpu in {0..3}; do beat_this input_dir -o output_dir --touch-first --skip-existing --gpu=$gpu & done
 ```
-If you want to use the DBN for postprocessing, add `--dbn`. The DBN parameters are the default ones from madmom. This requires installing the `madmom` package (with `pip install git+https://github.com/CPJKU/madmom.git`, as the current version on PyPI only supports Python<3.10 and numpy<1.20).
+If you want to use the DBN for postprocessing, add `--dbn`. The DBN implementation is vendored from madmom, so madmom does not need to be installed. By default, the DBN considers bars of 3 or 4 beats and tempi between 55 and 215 BPM. You can change this with `--beats-per-bar` (comma-separated), `--min-bpm` and `--max-bpm`, e.g., to only consider 4/4 time between 80 and 160 BPM:
+```bash
+beat_this path/to/audio.file --dbn --beats-per-bar 4 --min-bpm 80 --max-bpm 160
+```
 
 ### Python class
 
@@ -76,6 +79,10 @@ Optionally, you can produce a `.beats` file (e.g., for importing into [Sonic Vis
 from beat_this.utils import save_beat_tsv
 outpath = "path/to/output.beats"
 save_beat_tsv(beats, downbeats, outpath)
+```
+To use the DBN for postprocessing, pass `dbn=True`. Its parameters can be changed with the `beats_per_bar`, `min_bpm` and `max_bpm` keyword arguments (defaults: `(3, 4)`, `55.0` and `215.0`), which are only allowed together with `dbn=True`:
+```python
+file2beats = File2Beats(dbn=True, beats_per_bar=(4,), min_bpm=80.0, max_bpm=160.0)
 ```
 If you already have an audio tensor loaded, instead of `File2Beats`, use `Audio2Beats` and pass the tensor and its sample rate. We also provide `Audio2Frames` for framewise logits and `Spect2Frames` for spectrogram inputs.
 
@@ -166,7 +173,7 @@ Hung data:
 python launch_scripts/compute_paper_metrics.py --models hung0 hung1 hung2 --datasplit test
 ```
 
-With DBN (this requires installing the madmom package):
+With DBN:
 ```bash
 python launch_scripts/compute_paper_metrics.py --models final0 final1 final2 --datasplit test --dbn
 ```

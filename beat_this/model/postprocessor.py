@@ -1,9 +1,64 @@
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import torch
 import torch.nn.functional as F
 from einops import rearrange
+
+DBN_DEFAULTS = dict(beats_per_bar=(3, 4), min_bpm=55.0, max_bpm=215.0)
+
+
+def resolve_dbn_params(
+    dbn: bool,
+    beats_per_bar: int | Sequence[int] | None = None,
+    min_bpm: float | None = None,
+    max_bpm: float | None = None,
+    fps: int = 50,
+) -> dict:
+    """
+    Validate the given DBN parameters for predictions at `fps` frames per
+    second and fill in defaults for the ones that are None. Returns an empty dict if `dbn` is False. Raises a ValueError if
+    parameters are given although `dbn` is False, or if they are invalid.
+    """
+    given = {
+        name: value
+        for name, value in dict(
+            beats_per_bar=beats_per_bar, min_bpm=min_bpm, max_bpm=max_bpm
+        ).items()
+        if value is not None
+    }
+    if not dbn:
+        if given:
+            raise ValueError(
+                f"{', '.join(given)} can only be set when using the DBN postprocessor"
+            )
+        return {}
+    params = {**DBN_DEFAULTS, **given}
+    beats_per_bar = params["beats_per_bar"]
+    if isinstance(beats_per_bar, (int, np.integer)):
+        beats_per_bar = (beats_per_bar,)
+    beats_per_bar = tuple(beats_per_bar)
+    if not beats_per_bar or not all(
+        isinstance(b, (int, np.integer)) and not isinstance(b, bool) and b >= 1
+        for b in beats_per_bar
+    ):
+        raise ValueError(
+            "beats_per_bar must be a non-empty sequence of integers >= 1, "
+            f"got {params['beats_per_bar']!r}"
+        )
+    min_bpm, max_bpm = float(params["min_bpm"]), float(params["max_bpm"])
+    if not 0 < min_bpm < max_bpm:
+        raise ValueError(
+            "min_bpm and max_bpm must satisfy 0 < min_bpm < max_bpm, "
+            f"got min_bpm={min_bpm:g} and max_bpm={max_bpm:g}"
+        )
+    if max_bpm > 60 * fps:
+        raise ValueError(
+            f"max_bpm must be at most {60 * fps:g} (one beat per frame at {fps:g} fps), "
+            f"got {max_bpm:g}"
+        )
+    return dict(beats_per_bar=beats_per_bar, min_bpm=min_bpm, max_bpm=max_bpm)
 
 
 class Postprocessor:
@@ -19,19 +74,33 @@ class Postprocessor:
     Args:
         type (str): the type of postprocessing to apply. Either "minimal" or "dbn". Default is "minimal".
         fps (int): the frames per second of the model framewise predictions. Default is 50.
+        beats_per_bar (int or sequence of int, optional): the numbers of beats per bar the DBN
+            should consider. Only allowed for type "dbn". Default is (3, 4).
+        min_bpm (float, optional): the minimum tempo the DBN should consider. Only allowed for
+            type "dbn". Default is 55.
+        max_bpm (float, optional): the maximum tempo the DBN should consider. Only allowed for
+            type "dbn". Default is 215.
     """
 
-    def __init__(self, type: str = "minimal", fps: int = 50):
+    def __init__(
+        self,
+        type: str = "minimal",
+        fps: int = 50,
+        beats_per_bar: int | Sequence[int] | None = None,
+        min_bpm: float | None = None,
+        max_bpm: float | None = None,
+    ):
         assert type in ["minimal", "dbn"]
         self.type = type
         self.fps = fps
+        dbn_params = resolve_dbn_params(
+            type == "dbn", beats_per_bar, min_bpm, max_bpm, fps
+        )
         if type == "dbn":
-            from madmom.features.downbeats import DBNDownBeatTrackingProcessor
+            from beat_this.model.dbn import DBNDownBeatTrackingProcessor
 
             self.dbn = DBNDownBeatTrackingProcessor(
-                beats_per_bar=[3, 4],
-                min_bpm=55.0,
-                max_bpm=215.0,
+                **dbn_params,
                 fps=self.fps,
                 transition_lambda=100,
             )

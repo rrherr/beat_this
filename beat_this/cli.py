@@ -16,7 +16,17 @@ except ImportError:
     tqdm = None
 
 from beat_this.inference import File2File, load_audio
+from beat_this.model.postprocessor import resolve_dbn_params
 from beat_this.utils import save_beat_tsv
+
+
+def comma_separated_ints(value):
+    try:
+        return tuple(int(item) for item in value.split(","))
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"expected comma-separated integers, got {value!r}"
+        )
 
 
 def get_parser():
@@ -71,6 +81,21 @@ def get_parser():
         help="Override the option to use madmom's postprocessing DBN.",
     )
     parser.add_argument(
+        "--beats-per-bar",
+        type=comma_separated_ints,
+        help="Comma-separated numbers of beats per bar the DBN should consider. Requires --dbn. (default: 3,4)",
+    )
+    parser.add_argument(
+        "--min-bpm",
+        type=float,
+        help="Minimum tempo the DBN should consider. Requires --dbn. (default: 55)",
+    )
+    parser.add_argument(
+        "--max-bpm",
+        type=float,
+        help="Maximum tempo the DBN should consider. Requires --dbn. (default: 215)",
+    )
+    parser.add_argument(
         "--gpu",
         type=int,
         default=0,
@@ -120,6 +145,9 @@ def run(
     skip_existing,
     touch_first,
     dbn,
+    beats_per_bar,
+    min_bpm,
+    max_bpm,
     gpu,
     float16,
     activations,
@@ -131,7 +159,15 @@ def run(
         device = torch.device("cpu")
 
     # prepare model
-    file2file = File2File(model, device, float16, dbn)
+    file2file = File2File(
+        model,
+        device,
+        float16,
+        dbn,
+        beats_per_bar=beats_per_bar,
+        min_bpm=min_bpm,
+        max_bpm=max_bpm,
+    )
     if activations:
 
         def process(audiofile, outfile):
@@ -191,8 +227,26 @@ def run(
                 )
 
 
-def main():
-    run(**vars(get_parser().parse_args()))
+def main(argv=None):
+    parser = get_parser()
+    args = parser.parse_args(argv)
+    if not args.dbn:
+        given = [
+            flag
+            for flag, value in [
+                ("--beats-per-bar", args.beats_per_bar),
+                ("--min-bpm", args.min_bpm),
+                ("--max-bpm", args.max_bpm),
+            ]
+            if value is not None
+        ]
+        if given:
+            parser.error(f"{', '.join(given)} can only be used with --dbn")
+    try:
+        resolve_dbn_params(args.dbn, args.beats_per_bar, args.min_bpm, args.max_bpm)
+    except ValueError as e:
+        parser.error(str(e))
+    run(**vars(args))
 
 
 if __name__ == "__main__":
